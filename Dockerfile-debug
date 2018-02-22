@@ -1,0 +1,27 @@
+#select image
+FROM rust:jessie
+RUN rustup install nightly
+# create a new empty shell project
+RUN USER=root cargo new --bin realword
+RUN wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|apt-key add -
+RUN echo "deb http://apt.llvm.org/jessie/ llvm-toolchain-jessie-5.0 main" |  tee /etc/apt/sources.list.d/docker.list
+RUN apt-get update
+RUN apt-get install -y clang-5.0 clang-5.0-doc libclang-common-5.0-dev libclang-5.0-dev libclang1-5.0 libclang1-5.0-dbg libllvm5.0 libllvm5.0-dbg lldb-5.0 llvm-5.0 llvm-5.0-dev llvm-5.0-doc llvm-5.0-examples llvm-5.0-runtime clang-format-5.0 python-clang-5.0 libfuzzer-5.0-dev
+WORKDIR /realword
+
+# copy over your manifests
+COPY ./Cargo.lock ./Cargo.lock
+COPY ./Cargo.toml ./Cargo.toml
+
+# this build step will cache your dependencies
+RUN cargo  +nightly build
+RUN rm src/*.rs
+
+# copy your source tree
+COPY ./src ./src
+
+# build for debug
+RUN cargo  +nightly build
+
+# set the startup command to run your binary
+CMD lldb-server-5.0 platform --listen '*:2000' --min-gdbserver-port 2001 --max-gdbserver-port 2010 --server
