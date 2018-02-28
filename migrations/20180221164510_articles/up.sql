@@ -6,9 +6,9 @@ CREATE TABLE public.articles
     title TEXT NOT NULL,
     description TEXT NOT NULL,
     body TEXT NOT NULL,
-    tagList TEXT[],
+    "tagList" TEXT[],
     "createdAt" TIMESTAMP without time zone NOT NULL,
-    "updatedAt" TIMESTAMP without time zone NOT NULL,
+    "updatedAt" TIMESTAMP without time zone,
     CONSTRAINT articles_users_id_fk FOREIGN KEY (author_id) REFERENCES users (id) ON DELETE CASCADE
 );
 

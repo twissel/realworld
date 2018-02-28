@@ -33,6 +33,12 @@ extern crate serde;
 extern crate serde_derive;
 extern crate serde_json;
 
+//extern crate validator;
+//#[macro_use]
+//#extern crate validator_derive;
+
+extern crate slug;
+
 mod db;
 mod users;
 mod types;
@@ -68,22 +74,16 @@ fn main() {
     let pool = db::init_pool().expect("Failed to create database pool");
     rocket::ignite()
         .manage(pool)
-        .mount(
-            "/api/users",
-            routes!(
-                users::register::register_handler,
-                users::login::login_handler,
-            ),
-        )
-        .mount(
-            "/api",
-            routes!(users::current_user_handler, users::update_user_handler),
-        )
+        .mount("/api/users", routes!(users::register, users::login,))
+        .mount("/api", routes!(users::current, users::update))
         .mount(
             "/api",
             routes!(profile::profile, profile::follow, profile::unfollow),
         )
-        .mount("/api", routes!(article::create))
+        .mount(
+            "/api/articles",
+            routes!(article::get, article::create, article::favorite),
+        )
         .catch(errors![not_found, handle_422])
         .launch();
 }

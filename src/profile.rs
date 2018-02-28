@@ -5,18 +5,19 @@ use db::DbConnection;
 use diesel::prelude::*;
 use diesel::{debug_query, select};
 use diesel::result::{DatabaseErrorKind, Error};
+use std::borrow::Cow;
 
 #[derive(Debug, Serialize)]
-pub struct ProfileResponse {
-    profile: Profile,
+pub struct ProfileResponse<'a> {
+    profile: Profile<'a>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct Profile {
-    username: String,
-    bio: Option<String>,
-    image: Option<String>,
-    following: bool,
+pub struct Profile<'a> {
+    pub username: Cow<'a, str>,
+    pub bio: Option<Cow<'a, str>>,
+    pub image: Option<Cow<'a, str>>,
+    pub following: bool,
 }
 
 #[get("/profiles/<name>", format = "application/json")]
@@ -24,7 +25,7 @@ pub fn profile(
     connection: DbConnection,
     current_user: Option<User>,
     name: String,
-) -> ApiResult<ProfileResponse> {
+) -> ApiResult<ProfileResponse<'static>> {
     use db::schema::users::dsl::*;
     use db::schema::followers::dsl::*;
     use diesel::dsl::exists;
@@ -43,9 +44,9 @@ pub fn profile(
     };
 
     let profile = Profile {
-        username: user.username,
-        image: user.image,
-        bio: user.bio,
+        username: Cow::Owned(user.username),
+        image: user.image.map(|v| Cow::Owned(v)),
+        bio: user.bio.map(|v| Cow::Owned(v)),
         following: following,
     };
 
@@ -57,7 +58,7 @@ pub fn unfollow(
     connection: DbConnection,
     current_user: Result<User, ApiError>,
     name: String,
-) -> ApiResult<ProfileResponse> {
+) -> ApiResult<ProfileResponse<'static>> {
     use db::schema::followers::dsl::*;
     use diesel::insert_into;
     use diesel::pg::Pg;
@@ -71,9 +72,9 @@ pub fn unfollow(
             .filter(follower_id.eq(&follow.id)),
     ).execute(&*connection)?;
     let profile = Profile {
-        username: follow.username,
-        bio: follow.bio,
-        image: follow.image,
+        username: Cow::Owned(follow.username),
+        bio: follow.bio.map(|v| Cow::Owned(v)),
+        image: follow.image.map(|v| Cow::Owned(v)),
         following: false,
     };
 
@@ -85,33 +86,25 @@ pub fn follow(
     connection: DbConnection,
     current_user: Result<User, ApiError>,
     name: String,
-) -> ApiResult<ProfileResponse> {
+) -> ApiResult<ProfileResponse<'static>> {
     use db::schema::followers::dsl::*;
     use diesel::insert_into;
     use diesel::pg::Pg;
 
     let current = current_user?;
     let follow = User::load_by_name(&name, &connection)?;
-    let insert = insert_into(followers)
+    insert_into(followers)
         .values((user_id.eq(&current.id), follower_id.eq(&follow.id)))
-        .execute(&*connection);
+        .on_conflict((user_id, follower_id))
+        .do_nothing()
+        .execute(&*connection)?;
     let profile = Profile {
-        username: follow.username,
-        bio: follow.bio,
-        image: follow.image,
+        username: Cow::Owned(follow.username),
+        bio: follow.bio.map(|v| Cow::Owned(v)),
+        image: follow.image.map(|v| Cow::Owned(v)),
         following: true,
     };
 
     let resp = ProfileResponse { profile: profile };
-
-    match insert {
-        Err(e) => match e {
-            Error::DatabaseError(kind, _) => match kind {
-                DatabaseErrorKind::UniqueViolation => Ok(Json(resp)),
-                _ => Err(ApiError::Internal),
-            },
-            _ => Ok(Json(resp)),
-        },
-        Ok(_) => Ok(Json(resp)),
-    }
+    Ok(Json(resp))
 }

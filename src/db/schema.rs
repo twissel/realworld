@@ -6,9 +6,17 @@ table! {
         title -> Text,
         description -> Text,
         body -> Text,
-        taglist -> Nullable<Array<Text>>,
+        tagList -> Nullable<Array<Text>>,
         createdAt -> Timestamp,
-        updatedAt -> Timestamp,
+        updatedAt -> Nullable<Timestamp>,
+    }
+}
+
+table! {
+    favorites (id) {
+        id -> Int4,
+        article_id -> Int4,
+        user_id -> Int4,
     }
 }
 
