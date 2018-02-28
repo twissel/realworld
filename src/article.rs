@@ -19,7 +19,7 @@ use serde::ser::{Serialize, SerializeStruct, Serializer};
 use std::borrow::Cow;
 use chrono::format::{Fixed, Item, Numeric, Pad};
 
-static SELECT_REACH_ARTICLE: &str = "select articles.id as id,
+static SELECT_RICH_ARTICLE: &str = "select articles.id as id,
        articles.slug as slug,
        articles.title as title,
        articles.description as description,
@@ -59,12 +59,13 @@ pub struct Article {
 }
 
 #[derive(Debug, Serialize)]
-pub struct ReachArticleResponse {
-    article: ReachArticle,
+pub struct RichArticleResponse {
+    article: RichArticle,
 }
 
 #[derive(Debug, QueryableByName)]
-pub struct ReachArticle {
+#[allow(non_snake_case)]
+pub struct RichArticle {
     #[sql_type = "Integer"]
     id: i32,
     #[sql_type = "Text"]
@@ -100,7 +101,7 @@ pub struct ReachArticle {
     followed: bool,
 }
 
-impl ReachArticle {
+impl RichArticle {
     fn from(
         article: Article,
         author: Profile,
@@ -111,7 +112,7 @@ impl ReachArticle {
             Some(c) => c,
             None => 0,
         };
-        ReachArticle {
+        RichArticle {
             id: article.id,
             slug: article.slug,
             title: article.title,
@@ -130,7 +131,7 @@ impl ReachArticle {
     }
 }
 
-impl Serialize for ReachArticle {
+impl Serialize for RichArticle {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -144,7 +145,7 @@ impl Serialize for ReachArticle {
             image: image.as_ref().map(|image| Cow::Borrowed(image.as_str())),
         };
 
-        let mut s = serializer.serialize_struct("ReachArticle", 10)?;
+        let mut s = serializer.serialize_struct("RichArticle", 10)?;
         s.serialize_field("slug", &self.slug)?;
         s.serialize_field("title", &self.title)?;
         s.serialize_field("description", &self.description)?;
@@ -164,7 +165,6 @@ impl Serialize for ReachArticle {
 }
 
 impl Article {
-    pub fn favorited(&self, user: User) {}
     pub fn load_by_slug(slug_: &str, connection: &PgConnection) -> Result<Article, ApiError> {
         use db::schema::articles::dsl::*;
         articles
@@ -232,7 +232,7 @@ pub fn create(
     connection: DbConnection,
     user: CurrentUser,
     create: Json<CreateArticle>,
-) -> ApiResult<ReachArticleResponse> {
+) -> ApiResult<RichArticleResponse> {
     use db::schema::articles::dsl::*;
     let created = Utc::now();
     let create = create.validate(&*connection)?.into_inner();
@@ -256,9 +256,9 @@ pub fn create(
         image: user.image.as_ref().map(|s| Cow::Borrowed(s.as_ref())),
         following: false,
     };
-    let reach_article = ReachArticle::from(article, author, None, false);
-    Ok(Json(ReachArticleResponse {
-        article: reach_article,
+    let rich_article = RichArticle::from(article, author, None, false);
+    Ok(Json(RichArticleResponse {
+        article: rich_article,
     }))
 }
 
@@ -290,15 +290,15 @@ pub fn get(
     slug: String,
     connection: DbConnection,
     current_user: CurrentUser,
-) -> ApiResult<ReachArticleResponse> {
+) -> ApiResult<RichArticleResponse> {
     let current_user = current_user?;
 
-    let article = sql_query(SELECT_REACH_ARTICLE)
+    let article = sql_query(SELECT_RICH_ARTICLE)
         .bind::<Integer, _>(current_user.id)
         .bind::<Text, _>(slug)
-        .get_result::<ReachArticle>(&*connection)?;
+        .get_result::<RichArticle>(&*connection)?;
 
-    Ok(Json(ReachArticleResponse { article: article }))
+    Ok(Json(RichArticleResponse { article: article }))
 }
 
 #[post("/<slug>/favorite", format = "application/json")]
@@ -306,7 +306,7 @@ pub fn favorite(
     slug: String,
     connection: DbConnection,
     current_user: CurrentUser,
-) -> ApiResult<ReachArticleResponse> {
+) -> ApiResult<RichArticleResponse> {
     use db::schema::favorites::dsl::*;
     use db::schema::articles::dsl as articles_dsl;
 
@@ -322,10 +322,10 @@ pub fn favorite(
         .do_nothing()
         .execute(&*connection)?;
 
-    let article = sql_query(SELECT_REACH_ARTICLE)
+    let article = sql_query(SELECT_RICH_ARTICLE)
         .bind::<Integer, _>(current_user.id)
         .bind::<Text, _>(slug)
-        .get_result::<ReachArticle>(&*connection)?;
+        .get_result::<RichArticle>(&*connection)?;
 
-    Ok(Json(ReachArticleResponse { article: article }))
+    Ok(Json(RichArticleResponse { article: article }))
 }
