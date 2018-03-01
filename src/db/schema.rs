@@ -6,9 +6,9 @@ table! {
         title -> Text,
         description -> Text,
         body -> Text,
-        tagList -> Nullable<Array<Text>>,
-        createdAt -> Timestamp,
-        updatedAt -> Nullable<Timestamp>,
+        tag_list -> Nullable<Array<Text>>,
+        created_at -> Timestamp,
+        updated_at -> Nullable<Timestamp>,
     }
 }
 
