@@ -82,7 +82,12 @@ fn main() {
         )
         .mount(
             "/api/articles",
-            routes!(article::get, article::create, article::favorite),
+            routes!(
+                article::get,
+                article::create,
+                article::favorite,
+                article::update
+            ),
         )
         .catch(errors![not_found, handle_422])
         .launch();

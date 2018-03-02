@@ -6,6 +6,8 @@ use crypto::sha2::Sha256;
 use std::io::Result as IoResult;
 use types::{ApiError, ValidationError};
 use jwt::{Header, Registered, Token};
+use profile::Profile;
+use std::borrow::Cow;
 
 #[derive(Debug, Queryable, Identifiable, Serialize, AsChangeset)]
 pub struct User {
@@ -82,6 +84,18 @@ impl User {
                 e.add_error("token", "Invalid jwt token");
                 Err(e.into())
             }
+        }
+    }
+
+    pub fn profile(&self, following: bool) -> Profile<'static> {
+        let username = Cow::Owned(self.username.clone());
+        let bio = self.bio.clone().map(|bio| Cow::Owned(bio));
+        let image = self.image.clone().map(|image| Cow::Owned(image));
+        Profile {
+            username,
+            bio,
+            following,
+            image,
         }
     }
 

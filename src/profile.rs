@@ -6,17 +6,22 @@ use diesel::prelude::*;
 use diesel::{debug_query, select};
 use diesel::result::{DatabaseErrorKind, Error};
 use std::borrow::Cow;
+use diesel::sql_types::{BigInt, Bool, Integer, Nullable, Text, Timestamp};
 
 #[derive(Debug, Serialize)]
 pub struct ProfileResponse<'a> {
     profile: Profile<'a>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, QueryableByName)]
 pub struct Profile<'a> {
+    #[sql_type = "Text"]
     pub username: Cow<'a, str>,
+    #[sql_type = "Nullable<Text>"]
     pub bio: Option<Cow<'a, str>>,
+    #[sql_type = "Nullable<Text>"]
     pub image: Option<Cow<'a, str>>,
+    #[sql_type = "Bool"]
     pub following: bool,
 }
 
