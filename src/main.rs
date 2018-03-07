@@ -5,6 +5,8 @@
 #![allow(unused_imports)]
 #![feature(underscore_lifetimes)]
 #![feature(entry_or_default)]
+#![feature(conservative_impl_trait)]
+#![recursion_limit = "1024"]
 
 extern crate dotenv;
 #[macro_use]
@@ -86,9 +88,13 @@ fn main() {
                 article::get,
                 article::create,
                 article::favorite,
-                article::update
+                article::update,
+                article::delete,
+                article::list_without_params,
+                article::list
             ),
         )
+        .mount("/api/", routes!(article::tags))
         .catch(errors![not_found, handle_422])
         .launch();
 }

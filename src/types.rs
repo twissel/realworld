@@ -32,6 +32,7 @@ pub enum ApiError {
     Validation(ValidationError),
     Internal,
     Unauthorized,
+    Forbidden,
 }
 
 impl From<DieselError> for ApiError {
@@ -103,6 +104,14 @@ impl<'r> Responder<'r> for ApiError {
                     "status": "401 Unauthorized"
                 }});
                 try_respond(req, &body, Status::raw(422))
+            }
+
+            ApiError::Forbidden => {
+                let body = json!({ "errors": {
+                    "status": "403 Forbidden"
+                }});
+
+                try_respond(req, &body, Status::raw(403))
             }
             _ => Err(Status::raw(500)),
         }

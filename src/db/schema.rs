@@ -6,7 +6,7 @@ table! {
         title -> Text,
         description -> Text,
         body -> Text,
-        tag_list -> Nullable<Array<Text>>,
+        tag_list -> Array<Text>,
         created_at -> Timestamp,
         updated_at -> Nullable<Timestamp>,
     }

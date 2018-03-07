@@ -4,21 +4,24 @@ use types::*;
 use rocket_contrib::Json;
 use db::DbConnection;
 use diesel::prelude::*;
-use diesel::{debug_query, select};
+use diesel::{debug_query, delete as diesel_delete, select};
 use diesel::result::{DatabaseErrorKind, Error};
-use db::schema::{articles, users};
+use db::schema::{articles, favorites, users};
 use chrono::{Local, NaiveDateTime, Utc};
 use regex::Regex;
 use slug::slugify;
 use diesel::{insert_into, sql_query, update as diesel_update};
 use profile::Profile;
-use diesel::dsl::{count, exists, Eq, Filter};
+use diesel::dsl::{count, exists, Eq, Filter, Limit, Offset};
 use diesel::sql_types::{BigInt, Bool, Integer, Nullable, Text, Timestamp};
 use diesel::pg::types::sql_types::Array;
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 use std::borrow::Cow;
 use chrono::format::{Fixed, Item, Numeric, Pad};
-use diesel::expression::{AsExpression, Expression};
+use diesel::expression::{AsExpression, BoxableExpression, Expression, SelectableExpression};
+use diesel::associations::HasTable;
+use diesel::pg::Pg;
+use diesel::query_dsl;
 
 static SELECT_RICH_ARTICLE: &str = "select articles.id as id,
        articles.slug as slug,
@@ -73,9 +76,25 @@ pub struct Article {
     title: String,
     description: String,
     body: String,
-    tag_list: Option<Vec<String>>,
+    tag_list: Vec<String>, // Option<Vec<String>>
     created_at: NaiveDateTime,
     updated_at: Option<NaiveDateTime>,
+}
+
+impl Article {
+    pub fn load_by_slug(slug_: &str, connection: &PgConnection) -> Result<Article, ApiError> {
+        use db::schema::articles::dsl::*;
+        articles
+            .filter(slug.eq(&slug_))
+            .get_result::<Article>(connection)
+            .map_err(|e| e.into())
+    }
+
+    fn by_slug<'r>(article_slug: &'r str) -> BySlug<'r> {
+        use db::schema::articles::dsl::*;
+        let condition = slug.eq(article_slug);
+        articles.filter(condition)
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -86,6 +105,7 @@ pub struct RichArticleResponse<'r> {
 #[derive(Debug, QueryableByName, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RichArticle<'a> {
+    #[serde(skip_serializing)]
     #[sql_type = "Integer"]
     id: i32,
     #[sql_type = "Text"]
@@ -134,7 +154,7 @@ impl<'a> RichArticle<'a> {
             title: article.title,
             description: article.description,
             body: article.body,
-            tag_list: article.tag_list,
+            tag_list: Some(article.tag_list),
             created_at: article.created_at,
             updated_at: article.updated_at,
             favorites_count: favorites_count,
@@ -150,24 +170,7 @@ impl<'a> RichArticle<'a> {
     }
 }
 
-impl Article {
-    pub fn load_by_slug(slug_: &str, connection: &PgConnection) -> Result<Article, ApiError> {
-        use db::schema::articles::dsl::*;
-        articles
-            .filter(slug.eq(&slug_))
-            .get_result::<Article>(connection)
-            .map_err(|e| e.into())
-    }
-
-    fn by_slug<'r>(article_slug: &'r str) -> BySlug<'r> {
-        use db::schema::articles::dsl::*;
-        let condition = slug.eq(article_slug);
-        articles.filter(condition)
-    }
-}
-
 #[derive(Deserialize, Insertable, Serialize)]
-#[allow(non_snake_case)]
 #[table_name = "articles"]
 pub struct NewArticle {
     author_id: i32,
@@ -417,4 +420,191 @@ pub fn favorite(
         .get_result::<RichArticle>(&*connection)?;
 
     Ok(Json(RichArticleResponse { article: article }))
+}
+
+#[delete("/<slug_>")]
+fn delete(connection: DbConnection, current_user: CurrentUser, slug_: String) -> ApiResult<()> {
+    let current_user = current_user?;
+    let article = Article::load_by_slug(&slug_, &*connection)?;
+    if article.author_id != current_user.id {
+        return Err(ApiError::Forbidden);
+    }
+
+    diesel_delete(&article).execute(&*connection)?;
+    Ok(Json(()))
+}
+
+#[derive(FromForm, Default, Debug)]
+struct ListFilter {
+    tag: Option<String>,
+    author: Option<String>,
+    favorited: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ListResponse<'a> {
+    articles: Vec<RichArticle<'a>>,
+    articles_count: usize,
+}
+
+#[get("/?<filter>")]
+fn list<'a>(
+    conn: DbConnection,
+    current_user: CurrentUser,
+    filter: ListFilter,
+) -> ApiResult<ListResponse<'a>> {
+    handle_list(conn, current_user, filter)
+}
+
+#[get("/")]
+fn list_without_params<'a>(
+    conn: DbConnection,
+    current_user: CurrentUser,
+) -> ApiResult<ListResponse<'a>> {
+    handle_list(conn, current_user, ListFilter::default())
+}
+
+fn handle_list<'a>(
+    conn: DbConnection,
+    current_user: CurrentUser,
+    articles_filter: ListFilter,
+) -> ApiResult<ListResponse<'a>> {
+    use db::schema::*;
+    use diesel::dsl::{count, count_star, sql};
+    use diesel::pg::Pg;
+    use diesel::pg::expression::dsl::any;
+    use diesel::PgArrayExpressionMethods;
+    use std::collections::HashMap;
+
+    allow_tables_to_appear_in_same_query!(users, articles);
+    allow_tables_to_appear_in_same_query!(users, favorites);
+    allow_tables_to_appear_in_same_query!(users, followers);
+    allow_tables_to_appear_in_same_query!(articles, favorites);
+    let mut query = articles::table
+        .inner_join(users::table.on(articles::author_id.eq(users::id)))
+        .into_boxed::<Pg>();
+    if let Some(author) = articles_filter.author {
+        query = query.filter(users::username.eq(author));
+    }
+
+    if let Some(favorited_by) = articles_filter.favorited {
+        let fav_articles = favorites::table
+            .select(favorites::article_id)
+            .filter(users::username.eq(favorited_by));
+        query = query.filter(articles::id.eq_any(fav_articles));
+    }
+
+    if let Some(tag) = articles_filter.tag {
+        let cond = articles::tag_list.contains(vec![tag]);
+        query = query.filter(cond);
+    }
+
+    if let Some(offset) = articles_filter.offset {
+        query = query.offset(offset);
+    }
+
+    let limit = articles_filter.limit.unwrap_or(20);
+
+    query = query.limit(limit);
+
+    let articles = query.get_results::<(Article, User)>(&*conn)?;
+    let article_ids = articles.iter().map(|elem| elem.0.id).collect::<Vec<i32>>();
+
+    let mut fav_count = favorites::table
+        .select(sql::<(Integer, BigInt)>("article_id, count(user_id)"))
+        .group_by(favorites::article_id)
+        .filter(favorites::article_id.eq(any(article_ids.clone())))
+        .get_results::<(i32, i64)>(&*conn)?
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+    match current_user {
+        Ok(user) => {
+            let authors = articles.iter().map(|elem| elem.1.id).collect::<Vec<i32>>();
+            let follows = exists(
+                followers::table.select(sql::<Integer>("1")).filter(
+                    followers::follower_id
+                        .eq(user.id)
+                        .and(users::id.eq(followers::user_id)),
+                ),
+            );
+
+            let mut follows = users::table
+                .select((users::id, follows))
+                .filter(users::id.eq(any(authors)))
+                .get_results::<(i32, bool)>(&*conn)?
+                .into_iter()
+                .collect::<HashMap<_, _>>();
+
+            let favorited = exists(
+                favorites::table.select(sql::<Integer>("1")).filter(
+                    favorites::user_id
+                        .eq(user.id)
+                        .and(articles::id.eq(favorites::article_id)),
+                ),
+            );
+
+            let mut favorited = articles::table
+                .select((articles::id, favorited))
+                .filter(articles::id.eq(any(article_ids.clone())))
+                .get_results::<(i32, bool)>(&*conn)?
+                .into_iter()
+                .collect::<HashMap<_, _>>();
+
+            let rich_articles = articles
+                .into_iter()
+                .map(|elem| {
+                    let article = elem.0;
+                    let user = elem.1;
+                    let follows_user = follows.remove(&user.id).unwrap_or(false);
+                    let favorites_count = fav_count.remove(&article.id).unwrap_or(0);
+                    let favorited_by_user = favorited.remove(&article.id).unwrap_or(false);
+                    let profile = user.profile(follows_user);
+                    RichArticle::from(article, profile, Some(favorites_count), favorited_by_user)
+                })
+                .collect::<Vec<RichArticle>>();
+            let count = rich_articles.len();
+            Ok(Json(ListResponse {
+                articles: rich_articles,
+                articles_count: count,
+            }))
+        }
+        Err(_) => {
+            let rich_articles = articles
+                .into_iter()
+                .map(|elem| {
+                    let article = elem.0;
+                    let user = elem.1;
+                    let favorites_count = fav_count.remove(&article.id).unwrap_or(0);
+                    let profile = user.profile(false);
+                    RichArticle::from(article, profile, Some(favorites_count), false)
+                })
+                .collect::<Vec<RichArticle>>();
+            let count = rich_articles.len();
+            Ok(Json(ListResponse {
+                articles: rich_articles,
+                articles_count: count,
+            }))
+        }
+    }
+}
+
+
+#[derive(Debug, Serialize)]
+struct TagList {
+    tags: Vec<String>,
+}
+
+sql_function!(unnest, unnest_t, (a: Array<Text>) -> Text);
+
+#[get("/tags")]
+fn tags(conn: DbConnection) -> ApiResult<TagList> {
+    use db::schema::articles::dsl::*;
+    let tags = articles
+        .select(unnest(tag_list))
+        .distinct()
+        .get_results::<String>(&*conn)?;
+    Ok(Json(TagList {tags}))
 }

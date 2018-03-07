@@ -99,7 +99,7 @@ pub fn follow(
     let current = current_user?;
     let follow = User::load_by_name(&name, &connection)?;
     insert_into(followers)
-        .values((user_id.eq(&current.id), follower_id.eq(&follow.id)))
+        .values((user_id.eq(&follow.id), follower_id.eq(&current.id)))
         .on_conflict((user_id, follower_id))
         .do_nothing()
         .execute(&*connection)?;

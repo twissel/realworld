@@ -1,0 +1,1 @@
+ALTER TABLE public.articles ALTER COLUMN tag_list SET NOT NULL;
