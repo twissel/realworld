@@ -7,8 +7,8 @@ table! {
         description -> Text,
         body -> Text,
         tag_list -> Array<Text>,
-        created_at -> Timestamp,
-        updated_at -> Nullable<Timestamp>,
+        created_at -> Timestamptz,
+        updated_at -> Timestamptz,
     }
 }
 
