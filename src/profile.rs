@@ -73,8 +73,8 @@ pub fn unfollow(
     let follow = User::load_by_name(&name, &connection)?;
     delete(
         followers
-            .filter(user_id.eq(&current.id))
-            .filter(follower_id.eq(&follow.id)),
+            .filter(user_id.eq(&follow.id))
+            .filter(follower_id.eq(&current.id)),
     ).execute(&*connection)?;
     let profile = Profile {
         username: Cow::Owned(follow.username),
