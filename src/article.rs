@@ -7,13 +7,13 @@ use diesel::prelude::*;
 use diesel::{debug_query, delete as diesel_delete, select};
 use diesel::result::{DatabaseErrorKind, Error};
 use db::schema::{articles, favorites, users};
-use chrono::{Local, NaiveDateTime, Utc};
+use chrono::{DateTime, Local, NaiveDateTime, Utc};
 use regex::Regex;
 use slug::slugify;
 use diesel::{insert_into, sql_query, update as diesel_update};
 use profile::Profile;
 use diesel::dsl::{count, exists, Eq, Filter, Limit, Offset};
-use diesel::sql_types::{BigInt, Bool, Integer, Nullable, Text, Timestamp};
+use diesel::sql_types::{BigInt, Bool, Integer, Nullable, Text, Timestamptz};
 use diesel::pg::types::sql_types::Array;
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 use std::borrow::Cow;
@@ -22,6 +22,7 @@ use diesel::expression::{AsExpression, BoxableExpression, Expression, Selectable
 use diesel::associations::HasTable;
 use diesel::pg::Pg;
 use diesel::query_dsl;
+use utils;
 
 static SELECT_RICH_ARTICLE: &str = "select articles.id as id,
        articles.slug as slug,
@@ -77,8 +78,8 @@ pub struct Article {
     description: String,
     body: String,
     tag_list: Vec<String>, // Option<Vec<String>>
-    created_at: NaiveDateTime,
-    updated_at: Option<NaiveDateTime>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
 }
 
 impl Article {
@@ -119,12 +120,14 @@ pub struct RichArticle<'a> {
     #[sql_type = "Nullable<Array<Text>>"]
     #[column_name = "tag_list"]
     tag_list: Option<Vec<String>>,
-    #[sql_type = "Timestamp"]
+    #[sql_type = "Timestamptz"]
     #[column_name = "created_at"]
-    created_at: NaiveDateTime,
-    #[sql_type = "Nullable<Timestamp>"]
+    #[serde(serialize_with = "utils::serialize_date")]
+    created_at: DateTime<Utc>,
+    #[sql_type = "Timestamptz"]
+    #[serde(serialize_with = "utils::serialize_date")]
     #[column_name = "updated_at"]
-    updated_at: Option<NaiveDateTime>,
+    updated_at: DateTime<Utc>,
     #[sql_type = "BigInt"]
     favorites_count: i64,
 
@@ -178,9 +181,9 @@ pub struct NewArticle {
     title: String,
     description: String,
     body: String,
-    tag_list: Option<Vec<String>>,
-    created_at: NaiveDateTime,
-    updated_at: Option<NaiveDateTime>,
+    tag_list: Vec<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -190,6 +193,7 @@ pub struct ArticleDetails {
     description: String,
     body: String,
     #[serde(default)]
+    #[serde(rename = "tagList")]
     tag_list: Vec<String>,
 }
 
@@ -287,9 +291,9 @@ pub fn create(
         title: create.article.title,
         body: create.article.body,
         description: create.article.description,
-        created_at: created.naive_utc(),
-        updated_at: Some(created.naive_utc()),
-        tag_list: Some(create.article.tag_list),
+        created_at: created,
+        updated_at: created,
+        tag_list: create.article.tag_list,
     };
     let article = insert_into(articles)
         .values(&new_article)
@@ -343,7 +347,7 @@ pub fn update(
         article.description = description;
     }
 
-    article.updated_at = Some(Utc::now().naive_utc());
+    article.updated_at = Utc::now();
 
     diesel_update(&article).set(&article).execute(&*connection)?;
     let favorited_count = favorites
@@ -591,7 +595,6 @@ fn handle_list<'a>(
     }
 }
 
-
 #[derive(Debug, Serialize)]
 struct TagList {
     tags: Vec<String>,
@@ -606,5 +609,5 @@ fn tags(conn: DbConnection) -> ApiResult<TagList> {
         .select(unnest(tag_list))
         .distinct()
         .get_results::<String>(&*conn)?;
-    Ok(Json(TagList {tags}))
+    Ok(Json(TagList { tags }))
 }

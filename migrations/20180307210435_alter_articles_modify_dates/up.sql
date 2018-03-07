@@ -1,0 +1,3 @@
+ALTER TABLE public.articles ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at::TIMESTAMPTZ;
+ALTER TABLE public.articles ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at::TIMESTAMPTZ;
+ALTER TABLE public.articles ALTER COLUMN updated_at SET NOT NULL;
