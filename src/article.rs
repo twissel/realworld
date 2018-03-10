@@ -40,17 +40,17 @@ allow_tables_to_appear_in_same_query!(articles, favorites);
 #[serde(rename_all = "camelCase")]
 pub struct Article {
     #[serde(skip_serializing)]
-    id: i32,
+    pub id: i32,
 
     #[serde(skip_serializing)]
-    author_id: i32,
-    slug: String,
-    title: String,
-    description: String,
-    body: String,
-    tag_list: Vec<String>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
+    pub author_id: i32,
+    pub slug: String,
+    pub title: String,
+    pub description: String,
+    pub body: String,
+    pub tag_list: Vec<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 impl Article {
@@ -62,13 +62,13 @@ impl Article {
             .map_err(|e| e.into())
     }
 
-    fn by_slug<'r>(article_slug: &'r str) -> BySlug<'r> {
+    pub fn by_slug<'r>(article_slug: &'r str) -> BySlug<'r> {
         use db::schema::articles::dsl::*;
         let condition = slug.eq(article_slug);
         articles.filter(condition)
     }
 
-    fn get_favorites_count(&self, conn: &PgConnection) -> Result<i64, ApiError> {
+    pub fn get_favorites_count(&self, conn: &PgConnection) -> Result<i64, ApiError> {
         favorites::table
             .select(count_star())
             .filter(favorites::article_id.eq(&self.id))
@@ -76,7 +76,7 @@ impl Article {
             .map_err(|e| e.into())
     }
 
-    fn is_favorited_by(&self, user: &User, conn: &PgConnection) -> Result<bool, ApiError> {
+    pub fn is_favorited_by(&self, user: &User, conn: &PgConnection) -> Result<bool, ApiError> {
         select(exists(
             favorites::table.filter(
                 favorites::article_id
@@ -432,7 +432,7 @@ pub fn favorite(
     Ok(Json(RichArticleResponse { article: article }))
 }
 
-#[delete("/<slug_>")]
+#[delete("/<slug_>", format = "application/json")]
 fn delete(connection: DbConnection, current_user: CurrentUser, slug_: String) -> ApiResult<()> {
     let current_user = current_user?;
     let article = Article::load_by_slug(&slug_, &*connection)?;
@@ -460,7 +460,7 @@ struct ListResponse<'a> {
     articles_count: usize,
 }
 
-#[get("/?<filter>")]
+#[get("/?<filter>", format = "application/json")]
 fn list<'a>(
     conn: DbConnection,
     current_user: CurrentUser,
@@ -469,7 +469,7 @@ fn list<'a>(
     handle_list(conn, current_user, filter)
 }
 
-#[get("/")]
+#[get("/", format = "application/json")]
 fn list_without_params<'a>(
     conn: DbConnection,
     current_user: CurrentUser,
@@ -599,7 +599,7 @@ struct TagList {
 
 sql_function!(unnest, unnest_t, (a: Array<Text>) -> Text);
 
-#[get("/tags")]
+#[get("/tags", format = "application/json")]
 fn tags(conn: DbConnection) -> ApiResult<TagList> {
     use db::schema::articles::dsl::*;
     let tags = articles
@@ -615,7 +615,7 @@ struct Pagination {
     offset: Option<i64>,
 }
 
-#[get("/feed?<pagination>")]
+#[get("/feed?<pagination>", format = "application/json")]
 fn feed(
     conn: DbConnection,
     current_user: Result<User, ApiError>,
@@ -624,7 +624,7 @@ fn feed(
     handle_feed(current_user?, conn, pagination)
 }
 
-#[get("/feed")]
+#[get("/feed", format = "application/json")]
 fn feed_without_params(
     conn: DbConnection,
     current_user: Result<User, ApiError>,

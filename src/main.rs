@@ -47,6 +47,7 @@ mod types;
 mod utils;
 mod profile;
 mod article;
+mod comment;
 
 use rocket::request::Request;
 use rocket::Error;
@@ -93,7 +94,10 @@ fn main() {
                 article::list_without_params,
                 article::list,
                 article::feed,
-                article::feed_without_params
+                article::feed_without_params,
+                comment::add,
+                comment::get,
+                comment::delete
             ),
         )
         .mount("/api/", routes!(article::tags))

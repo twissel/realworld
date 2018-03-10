@@ -13,6 +13,17 @@ table! {
 }
 
 table! {
+    comments (id) {
+        id -> Int4,
+        article_id -> Int4,
+        user_id -> Int4,
+        created_at -> Timestamptz,
+        updated_at -> Timestamptz,
+        body -> Text,
+    }
+}
+
+table! {
     favorites (id) {
         id -> Int4,
         article_id -> Int4,
