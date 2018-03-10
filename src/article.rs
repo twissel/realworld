@@ -6,13 +6,13 @@ use db::DbConnection;
 use diesel::prelude::*;
 use diesel::{debug_query, delete as diesel_delete, select};
 use diesel::result::{DatabaseErrorKind, Error};
-use db::schema::{articles, favorites, users};
+use db::schema::{articles, favorites, followers, users};
 use chrono::{DateTime, Local, NaiveDateTime, Utc};
 use regex::Regex;
 use slug::slugify;
 use diesel::{insert_into, sql_query, update as diesel_update};
 use profile::Profile;
-use diesel::dsl::{count, exists, Eq, Filter, Limit, Offset};
+use diesel::dsl::{count, count_star, exists, Eq, Filter, Limit, Offset};
 use diesel::sql_types::{BigInt, Bool, Integer, Nullable, Text, Timestamptz};
 use diesel::pg::types::sql_types::Array;
 use serde::ser::{Serialize, SerializeStruct, Serializer};
@@ -23,44 +23,15 @@ use diesel::associations::HasTable;
 use diesel::pg::Pg;
 use diesel::query_dsl;
 use utils;
+use diesel::pg::expression::dsl::any;
+use diesel::PgArrayExpressionMethods;
+use std::collections::HashMap;
+use diesel::dsl::sql;
 
-static SELECT_RICH_ARTICLE: &str = "select articles.id as id,
-       articles.slug as slug,
-       articles.title as title,
-       articles.description as description,
-       articles.body as body,
-       articles.tag_list as tag_list,
-       articles.created_at as created_at,
-       articles.updated_at as updated_at,
-       coalesce(favorites_count, 0) as favorites_count,
-       is_favorited as favorited,
-       users.bio as bio,
-       users.image as image,
-       users.username as username,
-       following
-  from articles  LEFT JOIN (select count(favorites.article_id) as favorites_count, favorites.article_id  from favorites GROUP BY favorites.article_id) as favorited_count on articles.id = favorited_count.article_id
-                      LEFT JOIN (select article_id, BOOL(article_id) as is_favorited from favorites where favorites.user_id = $1) as userfavorites on articles.id = userfavorites.article_id
-                      LEFT JOIN (select follower_id, BOOL(follower_id) as following from followers where followers.user_id = $2) as userfollowers on articles.author_id = userfollowers.follower_id
-                      INNER JOIN users on users.id = articles.author_id
-                      where articles.slug = $3;";
-
-static SELECT_RICH_ARTICLE_UNAUTHORIZED: &str = "select articles.id as id,
-       articles.slug as slug,
-       articles.title as title,
-       articles.description as description,
-       articles.body as body,
-       articles.tag_list as tag_list,
-       articles.created_at as created_at,
-       articles.updated_at as updated_at,
-       CAST(0 AS BIGINT) as favorites_count,
-       false as favorited,
-       users.bio as bio,
-       users.image as image,
-       users.username as username,
-       false as following
-  from articles  LEFT JOIN (select count(favorites.article_id) as favorites_count, favorites.article_id  from favorites GROUP BY favorites.article_id) as favorited_count on articles.id = favorited_count.article_id
-                      INNER JOIN users on users.id = articles.author_id
-                      where articles.slug = $1;";
+allow_tables_to_appear_in_same_query!(users, articles);
+allow_tables_to_appear_in_same_query!(users, favorites);
+allow_tables_to_appear_in_same_query!(users, followers);
+allow_tables_to_appear_in_same_query!(articles, favorites);
 
 #[derive(Identifiable, Queryable, Associations, PartialEq, Debug, Deserialize, Serialize,
          AsChangeset)]
@@ -77,7 +48,7 @@ pub struct Article {
     title: String,
     description: String,
     body: String,
-    tag_list: Vec<String>, // Option<Vec<String>>
+    tag_list: Vec<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -95,6 +66,25 @@ impl Article {
         use db::schema::articles::dsl::*;
         let condition = slug.eq(article_slug);
         articles.filter(condition)
+    }
+
+    fn get_favorites_count(&self, conn: &PgConnection) -> Result<i64, ApiError> {
+        favorites::table
+            .select(count_star())
+            .filter(favorites::article_id.eq(&self.id))
+            .get_result::<i64>(conn)
+            .map_err(|e| e.into())
+    }
+
+    fn is_favorited_by(&self, user: &User, conn: &PgConnection) -> Result<bool, ApiError> {
+        select(exists(
+            favorites::table.filter(
+                favorites::article_id
+                    .eq(&self.id)
+                    .and(favorites::user_id.eq(&user.id)),
+            ),
+        )).get_result::<bool>(conn)
+            .map_err(|e| e.into())
     }
 }
 
@@ -164,12 +154,6 @@ impl<'a> RichArticle<'a> {
             favorited: favorited,
             author: author,
         }
-    }
-
-    fn by_slug<'r>(article_slug: &'r str) -> BySlug<'r> {
-        use db::schema::articles::dsl::*;
-        let condition = slug.eq(article_slug);
-        articles.filter(condition)
     }
 }
 
@@ -350,16 +334,9 @@ pub fn update(
     article.updated_at = Utc::now();
 
     diesel_update(&article).set(&article).execute(&*connection)?;
-    let favorited_count = favorites
-        .select(count(user_id))
-        .filter(article_id.eq(&article.id))
-        .first(&*connection)?;
+    let favorited_count = article.get_favorites_count(&*connection)?;
 
-    let favorited = select(exists(
-        favorites
-            .filter(article_id.eq(&article.id))
-            .filter(user_id.eq(&current_user.id)),
-    )).get_result::<bool>(&*connection)?;
+    let favorited = article.is_favorited_by(&current_user, &*connection)?;
 
     let article = RichArticle::from(
         article,
@@ -376,23 +353,45 @@ pub fn get(
     connection: DbConnection,
     current_user: CurrentUser,
 ) -> ApiResult<RichArticleResponse<'static>> {
-    use db::schema::favorites::dsl::*;
-    let rich_article = match current_user {
-        Ok(user) => sql_query(SELECT_RICH_ARTICLE)
-            .bind::<Integer, _>(user.id)
-            .bind::<Integer, _>(user.id)
-            .bind::<Text, _>(slug_)
-            .get_result(&*connection),
+    let data = articles::table
+        .inner_join(users::table.on(articles::author_id.eq(users::id)))
+        .filter(articles::slug.eq(&slug_))
+        .limit(1)
+        .get_result::<(Article, User)>(&*connection)?;
+    let article = data.0;
+    let author = data.1;
+
+    let mut favorited = false;
+    let mut followed = false;
+
+    let fav_count = article.get_favorites_count(&*connection)?;
+
+    match current_user {
+        Ok(user) => {
+            favorited = article.is_favorited_by(&user, &*connection)?;
+
+            followed = select(exists(
+                followers::table.filter(
+                    followers::follower_id
+                        .eq(&user.id)
+                        .and(followers::user_id.eq(&author.id)),
+                ),
+            )).get_result::<bool>(&*connection)?;
+        }
         Err(e) => match e {
-            ApiError::Internal => return Err(e),
-            _ => sql_query(SELECT_RICH_ARTICLE_UNAUTHORIZED)
-                .bind::<Text, _>(slug_)
-                .get_result(&*connection),
+            ApiError::Unauthorized => {}
+            e @ _ => return Err(e),
         },
-    };
-    println!("{:?}", rich_article);
+    }
+
+    let rich_article = RichArticle::from(
+        article,
+        author.profile(followed),
+        Some(fav_count),
+        favorited,
+    );
     Ok(Json(RichArticleResponse {
-        article: rich_article?,
+        article: rich_article,
     }))
 }
 
@@ -417,11 +416,18 @@ pub fn favorite(
         .do_nothing()
         .execute(&*connection)?;
 
-    let article = sql_query(SELECT_RICH_ARTICLE)
-        .bind::<Integer, _>(current_user.id)
-        .bind::<Integer, _>(current_user.id)
-        .bind::<Text, _>(slug)
-        .get_result::<RichArticle>(&*connection)?;
+    let article = Article::load_by_slug(&slug, &connection)?;
+    let favorited = article.is_favorited_by(&current_user, &connection)?;
+    let fav_count = article.get_favorites_count(&connection)?;
+    let author = User::load_by_id(&article.author_id, &connection)?;
+    let following = author.is_followed_by(&current_user, &connection)?;
+
+    let article = RichArticle::from(
+        article,
+        author.profile(following),
+        Some(fav_count),
+        favorited,
+    );
 
     Ok(Json(RichArticleResponse { article: article }))
 }
@@ -477,16 +483,7 @@ fn handle_list<'a>(
     articles_filter: ListFilter,
 ) -> ApiResult<ListResponse<'a>> {
     use db::schema::*;
-    use diesel::dsl::{count, count_star, sql};
-    use diesel::pg::Pg;
-    use diesel::pg::expression::dsl::any;
-    use diesel::PgArrayExpressionMethods;
-    use std::collections::HashMap;
 
-    allow_tables_to_appear_in_same_query!(users, articles);
-    allow_tables_to_appear_in_same_query!(users, favorites);
-    allow_tables_to_appear_in_same_query!(users, followers);
-    allow_tables_to_appear_in_same_query!(articles, favorites);
     let mut query = articles::table
         .inner_join(users::table.on(articles::author_id.eq(users::id)))
         .into_boxed::<Pg>();
@@ -610,4 +607,86 @@ fn tags(conn: DbConnection) -> ApiResult<TagList> {
         .distinct()
         .get_results::<String>(&*conn)?;
     Ok(Json(TagList { tags }))
+}
+
+#[derive(Debug, FromForm, Default)]
+struct Pagination {
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[get("/feed?<pagination>")]
+fn feed(
+    conn: DbConnection,
+    current_user: Result<User, ApiError>,
+    pagination: Pagination,
+) -> ApiResult<ListResponse<'static>> {
+    handle_feed(current_user?, conn, pagination)
+}
+
+#[get("/feed")]
+fn feed_without_params(
+    conn: DbConnection,
+    current_user: Result<User, ApiError>,
+) -> ApiResult<ListResponse<'static>> {
+    handle_feed(current_user?, conn, Pagination::default())
+}
+
+fn handle_feed(
+    current_user: User,
+    conn: DbConnection,
+    pagination: Pagination,
+) -> ApiResult<ListResponse<'static>> {
+    let following = followers::table
+        .select(followers::user_id)
+        .filter(followers::follower_id.eq(&current_user.id))
+        .get_results::<i32>(&*conn)?;
+
+    let query = articles::table
+        .inner_join(users::table.on(articles::author_id.eq(users::id)))
+        .filter(articles::author_id.eq_any(following))
+        .offset(pagination.offset.unwrap_or(0))
+        .limit(pagination.limit.unwrap_or(20));
+
+    let data = query.get_results::<(Article, User)>(&*conn)?;
+    let article_ids = data.iter().map(|elem| elem.0.id).collect::<Vec<i32>>();
+
+    let mut fav_count = favorites::table
+        .select(sql::<(Integer, BigInt)>("article_id, count(user_id)"))
+        .group_by(favorites::article_id)
+        .filter(favorites::article_id.eq(any(article_ids.clone())))
+        .get_results::<(i32, i64)>(&*conn)?
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+
+    let favorited = exists(
+        favorites::table.select(sql::<Integer>("1")).filter(
+            favorites::user_id
+                .eq(current_user.id)
+                .and(articles::id.eq(favorites::article_id)),
+        ),
+    );
+
+    let mut favorited = articles::table
+        .select((articles::id, favorited))
+        .filter(articles::id.eq(any(article_ids.clone())))
+        .get_results::<(i32, bool)>(&*conn)?
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+
+    let rich_articles = data.into_iter()
+        .map(|elem| {
+            let article = elem.0;
+            let user = elem.1;
+            let favorites_count = fav_count.remove(&article.id).unwrap_or(0);
+            let favorited_by_user = favorited.remove(&article.id).unwrap_or(false);
+            let profile = user.profile(true);
+            RichArticle::from(article, profile, Some(favorites_count), favorited_by_user)
+        })
+        .collect::<Vec<RichArticle>>();
+    let count = rich_articles.len();
+    Ok(Json(ListResponse {
+        articles: rich_articles,
+        articles_count: count,
+    }))
 }

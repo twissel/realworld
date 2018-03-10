@@ -1,6 +1,6 @@
 use diesel::prelude::*;
 use db::{DbConnection, TryLoadById};
-use db::schema::users;
+use db::schema::{followers, users};
 use crypto::pbkdf2::*;
 use crypto::sha2::Sha256;
 use std::io::Result as IoResult;
@@ -8,6 +8,8 @@ use types::{ApiError, ValidationError};
 use jwt::{Header, Registered, Token};
 use profile::Profile;
 use std::borrow::Cow;
+use diesel::select;
+use diesel::dsl::exists;
 
 #[derive(Debug, Queryable, Identifiable, Serialize, AsChangeset)]
 pub struct User {
@@ -99,10 +101,29 @@ impl User {
         }
     }
 
+    pub fn is_followed_by(&self, user: &User, conn: &PgConnection) -> Result<bool, ApiError> {
+        select(exists(
+            followers::table.filter(
+                followers::follower_id
+                    .eq(&user.id)
+                    .and(followers::user_id.eq(&self.id)),
+            ),
+        )).get_result::<bool>(&*conn)
+            .map_err(|e| e.into())
+    }
+
     pub fn load_by_name(name: &str, connection: &PgConnection) -> Result<User, ApiError> {
         use db::schema::users::dsl::*;
         users
             .filter(username.eq(&name))
+            .get_result::<User>(connection)
+            .map_err(|e| e.into())
+    }
+
+    pub fn load_by_id(id_: &i32, connection: &PgConnection) -> Result<User, ApiError> {
+        use db::schema::users::dsl::*;
+        users
+            .filter(id.eq(&id_))
             .get_result::<User>(connection)
             .map_err(|e| e.into())
     }

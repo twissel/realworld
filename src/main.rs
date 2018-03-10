@@ -91,7 +91,9 @@ fn main() {
                 article::update,
                 article::delete,
                 article::list_without_params,
-                article::list
+                article::list,
+                article::feed,
+                article::feed_without_params
             ),
         )
         .mount("/api/", routes!(article::tags))
