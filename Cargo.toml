@@ -4,9 +4,9 @@ version = "0.1.0"
 authors = ["twissel <twissel@gmail.com>"]
 
 [dependencies]
-rocket = "0.3.6"
+rocket = "0.3.13"
 diesel = {  version = "1.1.1", features = ["postgres", "chrono"]} 
-rocket_codegen = "0.3.6"
+rocket_codegen = "0.3.13"
 dotenv = "0.10.1"
 dotenv_codegen = "0.11.0"
 dotenv_macros = "0.10.0"
@@ -16,16 +16,13 @@ r2d2-diesel = "1.0.0"
 lazy_static = "1.0"
 serde = "1.0.27"
 serde_derive = "1.0.27"
-rocket_contrib = "0.3.6"
+rocket_contrib = "0.3.13"
 rust-crypto = "^0.2"
 regex = { version = "0.2", features = ["pattern"]}
 serde_json = "1.0"
 jwt = "0.4.0"
-chrono = { version = "0.4.0", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
 #validator = "0.6.3"
 #validator_derive = "0.6.1"
 
 slug = "0.1.2"
-
-[replace]
-"chrono:0.4.0" = { git = 'https://github.com/chronotope/chrono', branch = "master"}

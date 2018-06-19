@@ -13,7 +13,7 @@ use serde::de::Deserialize;
 use std::fmt::Debug;
 use profile::Profile;
 use diesel::BelongingToDsl;
-use diesel::{select, delete as diesel_delete};
+use diesel::{delete as diesel_delete, select};
 use diesel::dsl::{any, exists, sql};
 use diesel::sql_types::Integer;
 use std::collections::HashMap;
@@ -124,7 +124,7 @@ fn get(
     user: CurrentUser,
     slug: String,
 ) -> ApiResult<CommentsContainer<Vec<CommentView<'static>>>> {
-    let article = Article::load_by_slug(&slug, &*conn)?;
+    let article = Article::load_by_slug(&slug, &conn)?;
     let data = Comment::belonging_to(&article)
         .inner_join(users::table.on(comments::user_id.eq(users::id)))
         .get_results::<(Comment, User)>(&*conn)?;
@@ -176,7 +176,7 @@ fn delete(conn: DbConnection, user: CurrentUser, _slug: String, id: i32) -> ApiR
     let user = user?;
     let comment = comments::table.find(id).first::<Comment>(&*conn)?;
     if comment.user_id != user.id {
-        return Err(ApiError::Forbidden)
+        return Err(ApiError::Forbidden);
     }
     diesel_delete(&comment).execute(&*conn)?;
     Ok(Json(()))

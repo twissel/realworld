@@ -1,32 +1,32 @@
-use users::models::User;
-use users::CurrentUser;
-use types::*;
-use rocket_contrib::Json;
-use db::DbConnection;
-use diesel::prelude::*;
-use diesel::{debug_query, delete as diesel_delete, select};
-use diesel::result::{DatabaseErrorKind, Error};
-use db::schema::{articles, favorites, followers, users};
+use chrono::format::{Fixed, Item, Numeric, Pad};
 use chrono::{DateTime, Local, NaiveDateTime, Utc};
-use regex::Regex;
-use slug::slugify;
+use db::schema::{articles, favorites, followers, users};
+use db::DbConnection;
+use diesel::associations::HasTable;
+use diesel::dsl::sql;
+use diesel::dsl::{count, count_star, exists, Eq, Filter, Limit, Offset};
+use diesel::expression::{AsExpression, BoxableExpression, Expression, SelectableExpression};
+use diesel::pg::expression::dsl::any;
+use diesel::pg::types::sql_types::Array;
+use diesel::pg::Pg;
+use diesel::prelude::*;
+use diesel::query_dsl;
+use diesel::result::{DatabaseErrorKind, Error};
+use diesel::sql_types::{BigInt, Bool, Integer, Nullable, Text, Timestamptz};
+use diesel::PgArrayExpressionMethods;
+use diesel::{debug_query, delete as diesel_delete, select};
 use diesel::{insert_into, sql_query, update as diesel_update};
 use profile::Profile;
-use diesel::dsl::{count, count_star, exists, Eq, Filter, Limit, Offset};
-use diesel::sql_types::{BigInt, Bool, Integer, Nullable, Text, Timestamptz};
-use diesel::pg::types::sql_types::Array;
+use regex::Regex;
+use rocket_contrib::Json;
 use serde::ser::{Serialize, SerializeStruct, Serializer};
+use slug::slugify;
 use std::borrow::Cow;
-use chrono::format::{Fixed, Item, Numeric, Pad};
-use diesel::expression::{AsExpression, BoxableExpression, Expression, SelectableExpression};
-use diesel::associations::HasTable;
-use diesel::pg::Pg;
-use diesel::query_dsl;
-use utils;
-use diesel::pg::expression::dsl::any;
-use diesel::PgArrayExpressionMethods;
 use std::collections::HashMap;
-use diesel::dsl::sql;
+use types::*;
+use users::models::User;
+use users::CurrentUser;
+use utils;
 
 allow_tables_to_appear_in_same_query!(users, articles);
 allow_tables_to_appear_in_same_query!(users, favorites);
@@ -35,7 +35,7 @@ allow_tables_to_appear_in_same_query!(articles, favorites);
 
 #[derive(Identifiable, Queryable, Associations, PartialEq, Debug, Deserialize, Serialize,
          AsChangeset)]
-#[belongs_to(User, foreign_key = "articles_users_id_fk")]
+#[belongs_to(User, foreign_key = "author_id")]
 #[table_name = "articles"]
 #[serde(rename_all = "camelCase")]
 pub struct Article {
@@ -401,8 +401,8 @@ pub fn favorite(
     connection: DbConnection,
     current_user: CurrentUser,
 ) -> ApiResult<RichArticleResponse<'static>> {
-    use db::schema::favorites::dsl::*;
     use db::schema::articles::dsl as articles_dsl;
+    use db::schema::favorites::dsl::*;
 
     let current_user = current_user?;
     let fav_article_id = articles_dsl::articles
