@@ -15,5 +15,9 @@ For more information on how to this works with other frontends/backends, head ov
 
 # How it works
 
-TODO
+# Setup
+1) cargo +nightly build
+2) docker-compose up
+3) diesel setup
+4) cargo +nightly run   
 
