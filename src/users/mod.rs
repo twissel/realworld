@@ -1,24 +1,24 @@
 use rocket_contrib::Json;
 use rocket_contrib::Value;
 pub mod models;
-use types::{ApiError, ApiResult, Validate, ValidationError};
-use rocket::response::{Responder, Response};
-use rocket::{Request, State};
-use rocket::http::Status;
-use std::collections::HashMap;
-use db::{DbConnection, Pool};
-use diesel::prelude::*;
-use diesel::dsl::exists;
-use diesel::{debug_query, select, update as diesel_update};
-use std::convert::From;
 use db::schema::users;
-use diesel::insert_into;
-use std::ops::Deref;
-use rocket::Route;
-use rocket::outcome::IntoOutcome;
+use db::{DbConnection, Pool};
 use diesel::associations::HasTable;
+use diesel::dsl::exists;
+use diesel::insert_into;
+use diesel::prelude::*;
+use diesel::{debug_query, select, update as diesel_update};
+use rocket::http::Status;
+use rocket::outcome::IntoOutcome;
 use rocket::request::{self, FromRequest};
+use rocket::response::{Responder, Response};
 use rocket::Outcome;
+use rocket::Route;
+use rocket::{Request, State};
+use std::collections::HashMap;
+use std::convert::From;
+use std::ops::Deref;
+use types::{ApiError, ApiResult, Validate, ValidationError};
 
 mod utils;
 
@@ -153,9 +153,9 @@ pub fn login(connection: DbConnection, login: Json<Login>) -> ApiResult<Value> {
 
 #[get("/user", format = "application/json")]
 pub fn current(user: Result<models::User, ApiError>) -> ApiResult<Value> {
-    let user = json!({"user": 
-        user?
-    });
+    let mut user = user?;
+    user.token = user.token()?;
+    let user = json!({ "user": user });
     Ok(Json(user))
 }
 
@@ -250,5 +250,3 @@ pub fn update(
         Ok(Json(json!({ "user": user })))
     }
 }
-
-
